@@ -1,25 +1,19 @@
+import os
+from pathlib import Path
+from typing import Any
+import warnings
 import hydra
+from omegaconf import DictConfig
 import torch
 
-from mask3d.models.mask3d import Mask3D
-from mask3d.utils.utils import (
+from .utils.utils import (
     load_checkpoint_with_missing_or_exsessive_keys,
     load_backbone_checkpoint_with_missing_or_exsessive_keys,
+)   
+from .datasets.scannet200.scannet200_constants import (
+    VALID_CLASS_IDS_200, 
+    SCANNET_COLOR_MAP_200
 )
-
-class InstanceSegmentation(torch.nn.Module):
-    def __init__(self, cfg):
-        super().__init__()
-        self.model = hydra.utils.instantiate(cfg.model)
-
-
-    def forward(self, x, raw_coordinates=None):
-        return self.model(x, raw_coordinates=raw_coordinates)
-    
-
-from omegaconf import OmegaConf, DictConfig
-import hydra
-from hydra.core.global_hydra import GlobalHydra
 from hydra.experimental import initialize, compose
 
 # imports for input loading
@@ -27,14 +21,81 @@ import albumentations as A
 import MinkowskiEngine as ME
 import numpy as np
 import open3d as o3d
+import wget
 
-# imports for output
-from datasets.scannet200.scannet200_constants import (VALID_CLASS_IDS_20, VALID_CLASS_IDS_200, SCANNET_COLOR_MAP_20, SCANNET_COLOR_MAP_200)
+warnings.filterwarnings("ignore")
 
-def get_model(checkpoint_path=None):
+URLS = {
+    "checkpoints/scannet200/scannet200_benchmark.ckpt": "https://omnomnom.vision.rwth-aachen.de/data/mask3d/checkpoints/scannet200/scannet200_benchmark.ckpt",
+}
 
+def replace_path(path: str) -> str:
+    """ Replace the path with the correct path for the current system """
+    cwd = os.getcwd()
+    parent_folder = Path(__file__).parent.parent # the folder before mask3d
+    rel_path = str(parent_folder.relative_to(cwd))
+    out_path = os.path.join(cwd, rel_path, path)
+    return out_path
 
+def replace_target_hydra_recursively(cfg: DictConfig, rel_path: str) -> DictConfig:
+    cfg_copy = cfg.copy()
+    for k, v in cfg_copy.items():
+        if isinstance(v, DictConfig):
+            cfg_copy[k] = replace_target_hydra_recursively(v, rel_path)
+        if k == "_target_":
+            # print(f"Replacing {k} {v} with {rel_path}.{v}")
+            cfg_copy[k] = f"{rel_path}.{v}"
+    return cfg_copy
+
+class InstanceSegmentation(torch.nn.Module):
+    def __init__(self, cfg: Any) -> None:
+        super().__init__()
+        model: DictConfig = cfg.model
+        # it is possible model looks like this
+        # {'_target_': 'mask3d.models.Mask3D', 'hidden_dim': 128, 
+        # 'dim_feedforward': 1024, 'num_queries': 150, 'num_heads': 8, 
+        # 'num_decoders': 3, 'dropout': 0.0, 'pre_norm': False, 
+        # 'use_level_embed': False, 'normalize_pos_enc': True, 
+        # 'positional_encoding_type': 'fourier', 'gauss_scale': 1.0, 
+        # 'hlevels': [0, 1, 2, 3], 'non_parametric_queries': True, 
+        # 'random_query_both': False, 'random_normal': False, 
+        # 'random_queries': False, 'use_np_features': False, 
+        # 'sample_sizes': [200, 800, 3200, 12800, 51200], 
+        # 'max_sample_size': False, 'shared_decoder': True, 
+        # 'num_classes': '${general.num_targets}', 
+        # 'train_on_segments': '${general.train_on_segments}', 
+        # 'scatter_type': 'mean', 'voxel_size': '${data.voxel_size}', 
+        # 'config': {'backbone': {'_target_': 'mask3d.models.Res16UNet34C', 
+        # 'config': {'dialations': [1, 1, 1, 1], 'conv1_kernel_size': 5, 
+        # 'bn_momentum': 0.02}, 'in_channels': '${data.in_channels}', 
+        # 'out_channels': '${data.num_labels}', 'out_fpn': True}}}
+
+        # and we need to instantiate the model differently because 
+        # we are assuming the current repo is a submodule, not a package
+        # so we need to import the model from the submodule
+        rel_path = str(Path(replace_path(".")).relative_to(Path.cwd())).replace("/", ".")
+        model = replace_target_hydra_recursively(model, rel_path)
+        self.model = hydra.utils.instantiate(model)
+
+    def forward(self, x: torch.Tensor, raw_coordinates: torch.Tensor) -> dict:
+        return self.model(x, raw_coordinates=raw_coordinates)
+
+def download_model(checkpoint_path: str = "checkpoints/scannet200/scannet200_benchmark.ckpt") -> None:
+    out_path = replace_path(checkpoint_path)
+    if not os.path.exists(out_path) and checkpoint_path not in URLS:
+        raise ValueError(f"Checkpoint not found: {checkpoint_path} and no URL provided in {URLS}")
+    elif not os.path.exists(out_path):
+        Path(out_path).mkdir(parents=True, exist_ok=True)
+        current_url = URLS[checkpoint_path]
+        print(f"Downloading model {current_url} to {filename}")
+        filename = wget.download(current_url, out=str(Path(out_path).parent))
+    else:
+        filename = out_path
+    return filename
+
+def get_model(checkpoint_path: str = "checkpoints/scannet200/scannet200_benchmark.ckpt") -> InstanceSegmentation:
     # Initialize the directory with config files
+    checkpoint_path = download_model(checkpoint_path)
     with initialize(config_path="conf"):
         # Compose a configuration
         cfg = compose(config_name="config_base_instance_segmentation.yaml")
@@ -97,14 +158,15 @@ def get_model(checkpoint_path=None):
     return model
 
 
-def load_mesh(pcl_file):
-    
+def load_mesh(pcl_file: str) -> o3d.geometry.TriangleMesh:
     # load point cloud
     input_mesh_path = pcl_file
     mesh = o3d.io.read_triangle_mesh(input_mesh_path)
     return mesh
 
-def prepare_data(mesh, device):
+def prepare_data(mesh: o3d.geometry.TriangleMesh, device: torch.device) -> tuple[
+    ME.SparseTensor, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
+]:
     
     # normalization for point cloud features
     color_mean = (0.47793125906962, 0.4303257521323044, 0.3749598901421883)
@@ -144,11 +206,11 @@ def prepare_data(mesh, device):
     return data, points, colors, features, unique_map, inverse_map
 
 
-def map_output_to_pointcloud(mesh, 
-                             outputs, 
-                             inverse_map, 
-                             label_space='scannet200',
-                             confidence_threshold=0.9):
+def map_output_to_pointcloud(mesh: o3d.geometry.TriangleMesh, 
+                             outputs: dict[str, torch.Tensor],
+                             inverse_map: np.ndarray,
+                             label_space: str='scannet200',
+                             confidence_threshold: float=0.9) -> np.ndarray:
     
     # parse predictions
     logits = outputs["pred_logits"]
@@ -197,9 +259,13 @@ def map_output_to_pointcloud(mesh,
         
     return labels_mapped
 
-def save_colorized_mesh(mesh, labels_mapped, output_file, colormap='scannet'):
-    
+def save_colorized_mesh(
+        _mesh: o3d.geometry.TriangleMesh,
+        labels_mapped: np.ndarray, 
+        output_file: str, 
+        colormap: str='scannet') -> o3d.geometry.TriangleMesh:
     # colorize mesh
+    mesh = _mesh.__copy__()
     colors = np.zeros((len(mesh.vertices), 3))
     for li in np.unique(labels_mapped):
         if colormap == 'scannet':
@@ -213,9 +279,9 @@ def save_colorized_mesh(mesh, labels_mapped, output_file, colormap='scannet'):
     colors = colors / 255.
     mesh.vertex_colors = o3d.utility.Vector3dVector(colors)
     o3d.io.write_triangle_mesh(output_file, mesh)
+    return mesh
 
 if __name__ == '__main__':
-    
     model = get_model('checkpoints/scannet200/scannet200_benchmark.ckpt')
     model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

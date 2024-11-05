@@ -15,7 +15,7 @@ from detectron2.projects.point_rend.point_features import (
     point_sample,
 )
 
-from mask3d.models.misc import (
+from .misc import (
     is_dist_avail_and_initialized,
     nested_tensor_from_tensor_list,
 )

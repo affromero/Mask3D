@@ -1,7 +1,7 @@
 import torch.nn as nn
 from MinkowskiEngine import MinkowskiReLU
 
-from mask3d.models.modules.common import ConvType, NormType, conv, get_norm
+from .common import ConvType, NormType, conv, get_norm
 
 
 class BasicBlockBase(nn.Module):

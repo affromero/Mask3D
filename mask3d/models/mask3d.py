@@ -5,10 +5,10 @@ import MinkowskiEngine.MinkowskiOps as me
 from MinkowskiEngine.MinkowskiPooling import MinkowskiAvgPooling
 import numpy as np
 from torch.nn import functional as F
-from mask3d.models.modules.common import conv
-from mask3d.models.position_embedding import PositionEmbeddingCoordsSine
-from mask3d.models.modules.helpers_3detr import GenericMLP
-from torch_scatter import scatter_mean, scatter_max, scatter_min
+from .modules.common import conv
+from .position_embedding import PositionEmbeddingCoordsSine
+from .modules.helpers_3detr import GenericMLP
+from torch_scatter import scatter_mean, scatter_max
 from torch.cuda.amp import autocast
 
 from pointnet2.pointnet2_utils import furthest_point_sample
@@ -68,8 +68,7 @@ class Mask3D(nn.Module):
         self.num_heads = num_heads
         self.num_queries = num_queries
         self.pos_enc_type = positional_encoding_type
-
-        self.backbone = hydra.utils.instantiate(config.backbone)
+        self.backbone = config.backbone if isinstance(config.backbone, nn.Module) else hydra.utils.instantiate(config.backbone)
         self.num_levels = len(self.hlevels)
         sizes = self.backbone.PLANES[-5:]
 

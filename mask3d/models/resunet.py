@@ -3,9 +3,9 @@ import MinkowskiEngine as ME
 import MinkowskiEngine.MinkowskiOps as me
 from MinkowskiEngine import MinkowskiReLU
 
-from mask3d.models.resnet import ResNetBase, get_norm
-from mask3d.models.modules.common import ConvType, NormType, conv, conv_tr
-from mask3d.models.modules.resnet_block import BasicBlock, Bottleneck, BasicBlockINBN
+from .resnet import ResNetBase, get_norm
+from .modules.common import ConvType, NormType, conv, conv_tr
+from .modules.resnet_block import BasicBlock, Bottleneck, BasicBlockINBN
 
 
 class MinkUNetBase(ResNetBase):
