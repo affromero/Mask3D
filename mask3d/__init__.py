@@ -85,10 +85,10 @@ def download_model(checkpoint_path: str = "checkpoints/scannet200/scannet200_ben
     if not os.path.exists(out_path) and checkpoint_path not in URLS:
         raise ValueError(f"Checkpoint not found: {checkpoint_path} and no URL provided in {URLS}")
     elif not os.path.exists(out_path):
-        Path(out_path).mkdir(parents=True, exist_ok=True)
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         current_url = URLS[checkpoint_path]
-        print(f"Downloading model {current_url} to {filename}")
         filename = wget.download(current_url, out=str(Path(out_path).parent))
+        print(f"Downloading model {current_url} to {filename}")
     else:
         filename = out_path
     return filename
@@ -259,10 +259,9 @@ def map_output_to_pointcloud(mesh: o3d.geometry.TriangleMesh,
         
     return labels_mapped
 
-def save_colorized_mesh(
+def colorized_mesh(
         _mesh: o3d.geometry.TriangleMesh,
         labels_mapped: np.ndarray, 
-        output_file: str, 
         colormap: str='scannet') -> o3d.geometry.TriangleMesh:
     # colorize mesh
     mesh = _mesh.__copy__()
@@ -278,7 +277,6 @@ def save_colorized_mesh(
     
     colors = colors / 255.
     mesh.vertex_colors = o3d.utility.Vector3dVector(colors)
-    o3d.io.write_triangle_mesh(output_file, mesh)
     return mesh
 
 if __name__ == '__main__':
