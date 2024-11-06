@@ -300,5 +300,7 @@ if __name__ == '__main__':
     labels = map_output_to_pointcloud(mesh, outputs, inverse_map)
     
     # save colorized mesh
-    save_colorized_mesh(mesh, labels, 'data/pcl_labelled.ply', colormap='scannet200')
+    color_mesh = colorized_mesh(mesh, labels, colormap='scannet200')
+    o3d.io.write_triangle_mesh('data/pcl_labelled.ply', color_mesh)
+
     
